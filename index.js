@@ -6,6 +6,7 @@
 const express = require("express");
 const swaggerUi = require("swagger-ui-express");
 const openapiDocument = require("./openapi.json");
+const db = require("./db");
 
 const app = express();
 const PORT = 3000;
@@ -14,17 +15,28 @@ const PORT = 3000;
 app.use(express.json());
 
 // -----------------------------------------------------------------
-// Stage 2: our "database" — just a list living in memory.
-// Restarting the server wipes this back to the 3 seed tasks.
+// W3 · A1: storage is now SQLite (tasks.db) instead of an in-memory
+// array. The API below doesn't know or care — it just calls these
+// small helper functions. That's the whole point of this assignment:
+// the storage layer changed, nothing above it did.
 // -----------------------------------------------------------------
-let tasks = [
-  { id: 1, title: "Buy milk", done: false },
-  { id: 2, title: "Walk the dog", done: false },
-  { id: 3, title: "Finish assignment", done: true },
-];
 
-// Keeps track of the next id to hand out when a task is created.
-let nextId = 4;
+// SQLite has no boolean type, so `done` is stored as 0/1.
+// This converts a raw database row into the same shape the API
+// has always returned: { id, title, done: true/false }.
+function toTaskObject(row) {
+  return { id: row.id, title: row.title, done: Boolean(row.done) };
+}
+
+const statements = {
+  getAll: db.prepare("SELECT * FROM tasks"),
+  getById: db.prepare("SELECT * FROM tasks WHERE id = ?"),
+  insert: db.prepare("INSERT INTO tasks (title, done) VALUES (?, 0)"),
+  updateTitle: db.prepare("UPDATE tasks SET title = ? WHERE id = ?"),
+  updateDone: db.prepare("UPDATE tasks SET done = ? WHERE id = ?"),
+  delete: db.prepare("DELETE FROM tasks WHERE id = ?"),
+  count: db.prepare("SELECT COUNT(*) AS total, SUM(done) AS done FROM tasks"),
+};
 
 // -----------------------------------------------------------------
 // Stage 1: root and health endpoints
@@ -47,18 +59,19 @@ app.get("/health", (req, res) => {
 // -----------------------------------------------------------------
 
 app.get("/tasks", (req, res) => {
-  res.json(tasks);
+  const rows = statements.getAll.all();
+  res.json(rows.map(toTaskObject));
 });
 
 app.get("/tasks/:id", (req, res) => {
   const id = Number(req.params.id);
-  const task = tasks.find((t) => t.id === id);
+  const row = statements.getById.get(id);
 
-  if (!task) {
+  if (!row) {
     return res.status(404).json({ error: `Task ${id} not found` });
   }
 
-  res.json(task);
+  res.json(toTaskObject(row));
 });
 
 // -----------------------------------------------------------------
@@ -66,23 +79,18 @@ app.get("/tasks/:id", (req, res) => {
 // -----------------------------------------------------------------
 
 app.post("/tasks", (req, res) => {
-  const { title } = req.body;
+  const body = req.body || {};
+  const { title } = body;
 
   // The server never trusts the client: check the input before using it.
   if (!title || typeof title !== "string" || title.trim() === "") {
     return res.status(400).json({ error: "Field 'title' is required and cannot be empty" });
   }
 
-  const newTask = {
-    id: nextId,
-    title: title.trim(),
-    done: false,
-  };
+  const result = statements.insert.run(title.trim());
+  const newTask = statements.getById.get(result.lastInsertRowid);
 
-  nextId += 1;
-  tasks.push(newTask);
-
-  res.status(201).json(newTask);
+  res.status(201).json(toTaskObject(newTask));
 });
 
 // -----------------------------------------------------------------
@@ -91,13 +99,14 @@ app.post("/tasks", (req, res) => {
 
 app.put("/tasks/:id", (req, res) => {
   const id = Number(req.params.id);
-  const task = tasks.find((t) => t.id === id);
+  const existing = statements.getById.get(id);
 
-  if (!task) {
+  if (!existing) {
     return res.status(404).json({ error: `Task ${id} not found` });
   }
 
-  const { title, done } = req.body;
+  const body = req.body || {};
+  const { title, done } = body;
 
   // Reject a body that has nothing usable in it.
   if (title === undefined && done === undefined) {
@@ -108,28 +117,29 @@ app.put("/tasks/:id", (req, res) => {
     if (typeof title !== "string" || title.trim() === "") {
       return res.status(400).json({ error: "Field 'title' cannot be empty" });
     }
-    task.title = title.trim();
+    statements.updateTitle.run(title.trim(), id);
   }
 
   if (done !== undefined) {
     if (typeof done !== "boolean") {
       return res.status(400).json({ error: "Field 'done' must be true or false" });
     }
-    task.done = done;
+    statements.updateDone.run(done ? 1 : 0, id);
   }
 
-  res.json(task);
+  const updated = statements.getById.get(id);
+  res.json(toTaskObject(updated));
 });
 
 app.delete("/tasks/:id", (req, res) => {
   const id = Number(req.params.id);
-  const index = tasks.findIndex((t) => t.id === id);
+  const existing = statements.getById.get(id);
 
-  if (index === -1) {
+  if (!existing) {
     return res.status(404).json({ error: `Task ${id} not found` });
   }
 
-  tasks.splice(index, 1);
+  statements.delete.run(id);
 
   res.status(204).send();
 });
@@ -139,18 +149,19 @@ app.delete("/tasks/:id", (req, res) => {
 // -----------------------------------------------------------------
 
 app.get("/stats", (req, res) => {
-  const total = tasks.length;
-  const done = tasks.filter((t) => t.done).length;
+  const row = statements.count.get();
+  const total = row.total;
+  const done = row.done || 0; // SUM() returns null when the table is empty
   res.json({ total, done, open: total - done });
 });
 
 app.post("/reset", (req, res) => {
-  tasks = [
-    { id: 1, title: "Buy milk", done: false },
-    { id: 2, title: "Walk the dog", done: false },
-    { id: 3, title: "Finish assignment", done: true },
-  ];
-  nextId = 4;
+  db.exec("DELETE FROM tasks");
+  db.exec("DELETE FROM sqlite_sequence WHERE name = 'tasks'"); // restarts id numbering at 1
+  statements.insert.run("Buy milk");
+  statements.insert.run("Walk the dog");
+  const lastId = statements.insert.run("Finish assignment").lastInsertRowid;
+  statements.updateDone.run(1, lastId);
   res.json({ message: "Tasks reset to the 3 seed tasks" });
 });
 

@@ -1,7 +1,8 @@
 # Task API
 
-A small CRUD API for managing a to-do list, built with **Node.js + Express**.
-Data is stored **in memory** — it resets to 3 seed tasks every time the server restarts.
+A small CRUD API for managing a to-do list, built with **Node.js + Express**, backed by a **SQLite** database (`better-sqlite3`).
+
+This started as an in-memory API (Assignment 1, W2·A1) and was upgraded in Assignment 2 (W3·A1) to persist data in a real database — the API itself didn't change, only the storage layer behind it.
 
 ## How to install & run
 
@@ -13,7 +14,19 @@ npm start
 The server starts on **http://localhost:3000**.
 Interactive Swagger docs are at **http://localhost:3000/docs**.
 
+The database file `tasks.db` is created automatically the first time the app runs — no manual setup needed. The `tasks` table is created if missing, and the 3 example tasks are inserted only if the table is empty, so restarting the server never duplicates or wipes real data.
+
+## Why SQLite
+
+SQLite needs no separate database server — it's a single file (`tasks.db`) that the app reads and writes directly. That makes it a good fit for a learning project: no install, no connection string, no server process to manage, and the whole database can be copied, inspected, or deleted like any other file. The API layer doesn't know or care that SQLite is behind it — swapping to PostgreSQL or MySQL later would only mean changing `db.js`, not any route handler.
+
+## Where the database lives
+
+`tasks.db`, in the project root, next to `index.js`. It's excluded from git via `.gitignore` — a database file is generated data, not source code, so it isn't committed to the repo.
+
 ## Endpoints
+
+Identical to Assignment 1 — the whole point of this assignment is that the API contract didn't change:
 
 | Method | Path          | Description                          | Success | Errors |
 |--------|---------------|---------------------------------------|---------|--------|
@@ -24,45 +37,67 @@ Interactive Swagger docs are at **http://localhost:3000/docs**.
 | POST   | `/tasks`      | Create a task (`{ "title": "..." }`)  | 201     | 400    |
 | PUT    | `/tasks/:id`  | Update a task's `title` and/or `done` | 200     | 400, 404 |
 | DELETE | `/tasks/:id`  | Delete a task                         | 204     | 404    |
-| GET    | `/stats`      | *(extra)* Counts of total/done/open   | 200     | —      |
+| GET    | `/stats`      | *(extra)* Counts of total/done/open, via SQL `COUNT()` | 200 | — |
 | POST   | `/reset`      | *(extra)* Reset to the 3 seed tasks   | 200     | —      |
 
-## Example: creating a task
+## Example: creating a task, then proving it survives a restart
 
 ```bash
 curl -i -X POST http://localhost:3000/tasks \
   -H "Content-Type: application/json" \
   -d '{"title":"Buy milk"}'
 ```
-
 ```
 HTTP/1.1 201 Created
-Content-Type: application/json; charset=utf-8
-
 {"id":4,"title":"Buy milk","done":false}
 ```
+Stop the server (Ctrl+C), run `npm start` again, then `GET /tasks` — task 4 is still there. In Assignment 1, it would have vanished.
+
+## Exploring the database directly (Stage 4)
+
+Opened `tasks.db` and ran queries directly against it, outside the API:
+
+```sql
+SELECT * FROM tasks WHERE done = 1;
+```
+```
+[
+  { id: 1, title: 'Buy milk', done: 1 },
+  { id: 3, title: 'Finish assignment', done: 1 }
+]
+```
+Changing rows this way and then calling `GET /tasks` through the API immediately reflects the change — confirming the API and the database are reading the same underlying data, not a cached copy.
+
+## Database screenshot
+
+_(Paste a screenshot of `tasks.db` opened in DB Browser for SQLite here, showing the `tasks` table and its rows.)_
+
+## Database screenshot
+
+Explored the database directly using DB Browser for SQLite:
+
+![Select all tasks](screenshots/sql-select-all.png)
+![Select only completed tasks](screenshots/sql-select-done.png)
+![Count all tasks](screenshots/sql-count.png)
+![Update all tasks to done via SQL](screenshots/sql-update-all-done.png)
 
 ## Swagger screenshot
 
-Full CRUD cycle tested through Swagger UI's "Try it out":
+Full CRUD cycle tested through Swagger UI's "Try it out", now backed by SQLite:
 
-![Create task 1](screenshots/post-task-1.jpeg)
-![Create task 2](screenshots/post-task-2.jpeg)
-![Get all tasks](screenshots/get-task-1.jpeg)
-![Get single task](screenshots/get-task-2.jpeg)
-![Update task 1](screenshots/put-task-1.jpeg)
-![Update task 2](screenshots/put-task-2.jpeg)
-![Delete task](screenshots/delete-task-1.jpeg)
-![After restart - data reset to seed tasks](screenshots/restart-get-task-1.jpeg)
+![Create task 1](screenshots/db-post-task-1.png)
+![Create task 2](screenshots/db-post-task-2.png)
+![Get all tasks](screenshots/db-get-task-1.png)
+![Get single task](screenshots/db-get-task-2.png)
+![Update task 1](screenshots/db-put-task-1.png)
+![Update task 2](screenshots/db-put-task-2.png)
+![Delete task](screenshots/db-delete-task-1.png)
+![After restart — data survived](screenshots/db-persistance-after-restart.png)
 
-## The mortality experiment
+## The persistence experiment
 
-After restarting the server, all tasks I had created, updated, or deleted were gone — 
-GET /tasks only showed the original 3 seed tasks again. This happens because the data 
-was stored in memory (a JavaScript array), and memory is wiped clean every time the 
-program (and the server process) restarts. This is exactly why real applications need 
-a database — to make data survive restarts.
+Unlike Assignment 1, restarting the server no longer clears the task list. All tasks created, updated, or deleted are still exactly as left after a full restart, because they now live in `tasks.db` on disk instead of a JavaScript variable in memory. The array in Assignment 1 disappeared because it lived only in RAM, which the operating system reclaims the moment the process exits; SQLite writes every change straight to the file, so the data outlives the process that wrote it.
 
 ## AI vs me
 
-_(If you do Stage 7, put your prompt, the AI's code, and your three differences here.)_
+_(If you do the bonus AI rematch stage, put your prompt, the AI's code, and your three differences here.)_
