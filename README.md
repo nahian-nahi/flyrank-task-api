@@ -16,6 +16,75 @@ Interactive Swagger docs are at **http://localhost:3000/docs**.
 
 The database file `tasks.db` is created automatically the first time the app runs — no manual setup needed. The `tasks` table is created if missing, and the 3 example tasks are inserted only if the table is empty, so restarting the server never duplicates or wipes real data.
 
+## Run the whole stack with Docker (BE-04)
+
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) to be running.
+
+```bash
+cp .env.example .env      # .env is gitignored; .env.example is committed
+docker compose up --build
+```
+
+The API is then on **http://localhost:3000** (Swagger at `/docs`), same as before. Stop it with `Ctrl+C`, or run in the background with `docker compose up -d --build`.
+
+**How it's wired**
+
+| File | Role |
+|------|------|
+| `Dockerfile` | Builds the app image (Node 22, installs dependencies inside the Linux image) |
+| `docker-compose.yml` | Starts the app, loads `.env`, and mounts the named volume `task-data` at `/data` |
+| `.env` / `.env.example` | `DB_PATH=/data/tasks.db` — where the SQLite file lives inside the container |
+| `.dockerignore` | Keeps the host's `node_modules` out of the image (a Windows build of `better-sqlite3` would break on Linux) |
+
+**Why no separate database container:** SQLite is a single file, not a server, so there is nothing to run "next to" the app. The database lives on a Docker **volume** instead, which is what makes the data outlive the container. (Q&A confirmed SQLite is acceptable for this assignment; the brief's Postgres container would be the equivalent step for a client/server database.)
+
+**What changed vs. Assignment 2 (honest version):** only `db.js`, which now reads the file path from `DB_PATH` instead of hard-coding `tasks.db`. `index.js` — every route and all validation — is untouched. The "swap the in-memory store for a real repository" step was already done in Assignment 2, when the array was replaced by SQLite behind the same API.
+
+### Proving persistence across app + container restarts
+
+```bash
+docker compose up -d --build
+curl -X POST http://localhost:3000/tasks -H "Content-Type: application/json" -d '{"title":"Survives Docker"}'
+curl http://localhost:3000/tasks                 # note the new task
+
+docker compose restart                           # restart the app container
+curl http://localhost:3000/tasks                 # still there
+
+docker compose down                              # remove the container entirely
+docker compose up -d                             # brand-new container, same volume
+curl http://localhost:3000/tasks                 # still there
+```
+
+The task survives because it is stored in the `task-data` volume, not in the container's own filesystem. (`docker compose down -v` would delete the volume and wipe the data — that is the one command that resets it.)
+
+**Actual output (full stack verified end-to-end):**
+```
+$ cd FlyRank-task-api
+
+$ curl -X POST http://localhost:3000/tasks -H "Content-Type: application/json" -d '{"title":"Survives Docker"}'
+{"id":4,"title":"Survives Docker","done":false}
+
+$ curl http://localhost:3000/tasks
+[{"id":1,...},{"id":2,...},{"id":3,...},{"id":4,"title":"Survives Docker","done":false}]
+
+$ docker compose restart
+ - Container flyrank-task-api-app-1 Restarting
+
+$ curl http://localhost:3000/tasks
+[...,{"id":4,"title":"Survives Docker","done":false}]   # still there after restart
+
+$ docker compose down
+ ✔ Container flyrank-task-api-app-1 Removed
+ ✔ Network flyrank-task-api_default Removed
+
+$ docker compose up -d
+ ✔ Network flyrank-task-api_default Created
+ ✔ Container flyrank-task-api-app-1 Started
+
+$ curl http://localhost:3000/tasks
+[...,{"id":4,"title":"Survives Docker","done":false}]   # still there after full container removal + recreation
+```
+
 ## Why SQLite
 
 SQLite needs no separate database server — it's a single file (`tasks.db`) that the app reads and writes directly. That makes it a good fit for a learning project: no install, no connection string, no server process to manage, and the whole database can be copied, inspected, or deleted like any other file. The API layer doesn't know or care that SQLite is behind it — swapping to PostgreSQL or MySQL later would only mean changing `db.js`, not any route handler.
@@ -67,10 +136,6 @@ SELECT * FROM tasks WHERE done = 1;
 ]
 ```
 Changing rows this way and then calling `GET /tasks` through the API immediately reflects the change — confirming the API and the database are reading the same underlying data, not a cached copy.
-
-## Database screenshot
-
-_(Paste a screenshot of `tasks.db` opened in DB Browser for SQLite here, showing the `tasks` table and its rows.)_
 
 ## Database screenshot
 

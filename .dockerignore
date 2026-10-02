@@ -1,0 +1,9 @@
+# node_modules from Windows contains a Windows build of better-sqlite3.
+# It would break inside the Linux container, so we never copy it in.
+node_modules
+tasks.db
+data
+.env
+.git
+screenshots
+*.log

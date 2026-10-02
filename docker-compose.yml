@@ -1,0 +1,15 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      # Named volume: Docker keeps this data even when the container is
+      # stopped, removed, or rebuilt. This is what makes data persist.
+      - task-data:/data
+    restart: unless-stopped
+
+volumes:
+  task-data:

@@ -1,3 +1,5 @@
 node_modules/
 server.log
 tasks.db
+data/
+.env

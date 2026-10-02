@@ -5,10 +5,19 @@
 // ---------------------------------------------------------------
 
 const Database = require("better-sqlite3");
+const fs = require("fs");
+const path = require("path");
 
-// This creates tasks.db in the project folder if it doesn't exist yet,
-// and opens it if it does. Nothing here wipes existing data.
-const db = new Database("tasks.db");
+// Where the database file lives comes from the environment (.env in Docker),
+// falling back to ./tasks.db so plain `npm start` still works with no setup.
+const dbPath = process.env.DB_PATH || "tasks.db";
+
+// Make sure the folder exists (in Docker this is the mounted volume, /data).
+fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
+
+// This creates the database file if it doesn't exist yet, and opens it
+// if it does. Nothing here wipes existing data.
+const db = new Database(dbPath);
 
 // Create the table if it doesn't already exist.
 // - id is the primary key, and AUTOINCREMENT makes SQLite hand out
